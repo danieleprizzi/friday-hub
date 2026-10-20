@@ -3,11 +3,18 @@
 (function(){
   var BASE="https://zojwdncxlcqzkzqyojye.supabase.co/functions/v1/friday/";
   var LS="friday_codice";
+  /* Cervello (Supabase, funzione "friday-cervello"): indirizzo e chiave sul telefono. L'indirizzo si puo cambiare (es. Mini-PC) senza toccare il codice. */
+  var CERVELLO="https://zojwdncxlcqzkzqyojye.supabase.co/functions/v1/friday-cervello";
+  var LSK="friday_cervello_token", LSU="friday_cervello_url";
 
-  /* primo avvio: il codice puo arrivare nell'indirizzo (#c=...), viene salvato e tolto dalla barra */
+  /* primo avvio: il codice puo arrivare nell'indirizzo (#c=... e/o #k=...), viene salvato e tolto dalla barra */
   try{
-    var m=/[#&]c=([A-Za-z0-9_-]+)/.exec(location.hash||"");
-    if(m){ localStorage.setItem(LS,m[1]); history.replaceState(null,"",location.pathname+location.search); }
+    var h=location.hash||"";
+    var m=/[#&]c=([A-Za-z0-9_-]+)/.exec(h);
+    var k=/[#&]k=([^&]+)/.exec(h);
+    if(m) localStorage.setItem(LS,m[1]);
+    if(k) localStorage.setItem(LSK,decodeURIComponent(k[1]));
+    if(m||k) history.replaceState(null,"",location.pathname+location.search);
   }catch(_){}
 
   function codice(){
@@ -45,12 +52,28 @@
     }
   };
   window.claude={use:function(k){ return k==="mcp"?Promise.resolve(mcp):Promise.reject(new Error("non disponibile")); }};
+  /* Cervello di Friday: se sul telefono c'e la chiave, prova prima lui. Se non risponde, torna null e si usa la strada di prima. */
+  function ls(k){ try{ return localStorage.getItem(k)||""; }catch(_){ return ""; } }
+  async function cervello(domanda){
+    var k=ls(LSK); if(!k) return null;
+    var url=ls(LSU); if(!/^https:\/\//.test(url)) url=CERVELLO;
+    var ac=new AbortController(), t=setTimeout(function(){ ac.abort(); },100000);
+    try{
+      var r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},body:JSON.stringify({domanda:domanda}),signal:ac.signal});
+      if(!r.ok) return null;
+      var j=await r.json();
+      var txt=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+      return txt?{risposta:String(txt),cervello:true,friday:j.friday||null}:null;
+    }catch(_){ return null; }
+    finally{ clearTimeout(t); }
+  }
   /* Gemini risponde a tutto (fuori da claude.ai Claude non c'e) */
   async function libero(domanda){
+    var v=await cervello(domanda); if(v) return v;
     var c=codice(); if(!c) return {errore:"Manca il codice di Friday su questo telefono."};
     var r=await fetch(BASE.replace("/friday/","/friday-libero/")+c,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({domanda:domanda})});
     if(!r.ok) return {errore:"Errore "+r.status};
     return await r.json();
   }
-  window.FridayBridge={call:call,libero:libero,haCodice:function(){ return !!codice(); }};
+  window.FridayBridge={call:call,libero:libero,haCodice:function(){ return !!codice(); },haCervello:function(){ return !!ls(LSK); }};
 })();
